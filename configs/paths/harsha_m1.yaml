@@ -1,0 +1,10 @@
+user: hg84
+
+# set the directory where the output files get saved
+cwd_dir:  /home/${paths.user}/Documents/Github/glados/FlyImitation/
+base_dir: /Users/harshagurnani/Documents/Work/FlyLocomotion/biomech_model/${dataset.name}/RL_${dataset.name}/${train.version}
+save_dir: ${paths.base_dir}/${hydra:job.override_dirname}
+log_dir:  ${paths.save_dir}/logs/
+ckpt_dir: ${paths.save_dir}/ckpt/
+fig_dir:  ${paths.save_dir}/figures/
+data_dir: /Users/harshagurnani/Documents/GitHub/glados/datasets/Tuthill_data/

@@ -1,0 +1,49 @@
+# Dataset name - used to pick the data to load
+dataset_name: ${dataset.name}
+
+##### Easy Access Variables #####
+# if set to positive integer, overrides the default
+version: 'sensory_v4'
+seed: 22
+num_gpus: 1
+run_id: 44
+load_jobid: ''
+
+# train: train_${dataset.dname}
+
+# set default task and default training config based on dataset
+defaults:
+  - _self_
+  - dataset: fly_multiclip
+  - train: train_fly_multiclip_feco_v2
+  - paths: glados
+  # - override hydra/launcher: joblib
+  # - hydra/job_logging: disabled
+# - train: ${dataset}
+
+
+# set the directory where the output files get saved
+hydra:
+  job:
+      config:
+        override_dirname:
+          exclude_keys:
+            - paths
+            - version
+            - dataset
+            - dataset.train.gpu
+            - checkpoint
+            - gpu
+            - train
+            - train.note
+            - num_gpus
+            - train.num_envs
+            - load_jobid
+
+  run:
+    dir: ${paths.base_dir}/${hydra:job.override_dirname}
+  sweep:
+    dir: ${paths.base_dir}
+    subdir: ${hydra.job.override_dirname}
+  runtime:
+    output_dir: ${paths.base_dir}/${hydra:job.override_dirname}

@@ -17,7 +17,8 @@ import numpy as np
 
 import os
 from pathlib import Path
-from preprocessing.preprocess import ReferenceClip
+from preprocessing.mjx_preprocess import ReferenceClip
+import functools
 
 
 def _bounded_quat_dist(source: np.ndarray, target: np.ndarray) -> np.ndarray:
@@ -42,6 +43,12 @@ def _bounded_quat_dist(source: np.ndarray, target: np.ndarray) -> np.ndarray:
     # shape and magnitude.
     return 0.5 * jp.arccos(dist)[..., np.newaxis]
 
+def _optogenetic_reset(shape, neu_id: Sequence[int] = [0], zvalue: float = 1.0, opto_mode: bool = False) -> jp.ndarray:
+    """Optogenetic activation of sensory neurons"""
+    opto_current = jp.zeros(shape, dtype=jp.float32)
+    if opto_mode:
+        opto_current = opto_current.at[:, neu_id].set(zvalue)
+    return opto_current
 
 class FlyTracking(PipelineEnv):
     """Single clip rodent tracking"""
@@ -84,6 +91,9 @@ class FlyTracking(PipelineEnv):
         ls_iterations: int = 6,
         inference_mode: bool = False,
         free_jnt: bool = False,
+        opto_mode: bool = False,
+        sensory_neurons: int = 1440,
+        opto_fn = functools.partial( _optogenetic_reset, neu_id=[0], zvalue=1.0 ),
         **kwargs,
     ):
 
@@ -93,14 +103,18 @@ class FlyTracking(PipelineEnv):
 
             mjcf_path = (Path(mjcf_path).parent / "fruitfly_force_fast.xml").as_posix()
 
-        root = mjcf_dm.from_path(mjcf_path)
+        # root = mjcf_dm.from_path(mjcf_path)
+        spec = mujoco.MjSpec()
+        spec = spec.from_file(mjcf_path)
+        # first_joint.delete()
+        mj_model = spec.compile()
         print("Loaded Model:", mjcf_path)
         # for actuator in root.find_all("actuator"):
         #     actuator.gainprm = [actuator.forcerange[1]]
         #     del actuator.biastype
         #     del actuator.biasprm
 
-        mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
+        # mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
         mj_model.opt.solver = {
             "cg": mujoco.mjtSolver.mjSOL_CG,
             "newton": mujoco.mjtSolver.mjSOL_NEWTON,
@@ -177,6 +191,9 @@ class FlyTracking(PipelineEnv):
         self._quat_scaling = quat_scaling
         self._healthy_z_range = healthy_z_range
         self._reset_noise_scale = reset_noise_scale
+        self._opto_mode = opto_mode
+        self._n_sensory_latents = sensory_neurons
+        self._opto_fn = opto_fn
 
     def reset(self, rng) -> State:
         """Resets the environment to an initial state."""
@@ -210,20 +227,35 @@ class FlyTracking(PipelineEnv):
         low, hi = -self._reset_noise_scale, self._reset_noise_scale
 
         # New pos from reference clip
-        new_qpos = jp.concatenate(
-            (
-                reference_frame.position,
-                reference_frame.quaternion,
-                reference_frame.joints,
-            ),
-            axis=0,
-        )
+        # new_qpos = jp.concatenate(
+        #     (
+        #         reference_frame.position,
+        #         reference_frame.quaternion,
+        #         reference_frame.joints,
+        #     ),
+        #     axis=0,
+        # )
+        new_qpos = self.sys.qpos0
         qpos = new_qpos + jax.random.uniform(
             rng1, (self.sys.nq,), minval=low, maxval=hi
         )
         # Randomly sample velocities 
         qvel = jax.random.uniform(rng2, (self.sys.nv,), minval=low, maxval=hi)
-        # Physics step
+        # floor_z = self.sys.mj_model.geom('floor').pos[2]
+        # # Physics step check if feet penetrate floor
+        # def body_fn(vals):
+        #     qpos,qvel,floor_z = vals
+        #     qpos = qpos.at[2].set(qpos[2]+0.0001)
+        #     return (qpos,qvel,floor_z)
+        # def cond_fn(vals):
+        #     qpos,qvel,floor_z = vals
+        #     qpos = qpos.at[2].set(qpos[2]+0.0001)
+        #     data = self.pipeline_init(qpos, qvel)
+        #     feet_z = data.xpos[self._endeff_idxs,-1]
+        #     print(feet_z>floor_z)
+        #     return jp.all(feet_z>floor_z)
+        # jax.lax.while_loop(cond_fun=cond_fn,body_fun=body_fn, init_val=(qpos,qvel,floor_z))
+        
         data = self.pipeline_init(qpos, qvel)
         # Grab observations
         reference_obs, proprioceptive_obs = self._get_obs(data, info)
@@ -231,7 +263,13 @@ class FlyTracking(PipelineEnv):
         # Used to intialize our intention network
         info["task_obs_size"] = reference_obs.shape[-1]
 
-        obs = jp.concatenate([reference_obs, proprioceptive_obs])
+        if len(reference_obs.shape)==1:
+            shape = (self._n_sensory_latents,)
+        else:
+            shape = reference_obs.shape[:-1] + (self._n_sensory_latents,)
+        opto_obs = self._opto_fn( shape, opto_mode=self._opto_mode ) #
+        obs = jp.concatenate([reference_obs, proprioceptive_obs, opto_obs])
+        #obs = jp.concatenate([reference_obs, proprioceptive_obs])
 
         reward, done, zero = jp.zeros(3)
         # Initialize metrics
@@ -342,7 +380,13 @@ class FlyTracking(PipelineEnv):
         info["prev_ctrl"] = action
 
         reference_obs, proprioceptive_obs = self._get_obs(data, info)
-        obs = jp.concatenate([reference_obs, proprioceptive_obs])
+        if len(reference_obs.shape)==1:
+            shape = (self._n_sensory_latents,)
+        else:
+            shape = reference_obs.shape[:-1] + (self._n_sensory_latents,)
+        opto_obs = self._opto_fn( shape, opto_mode=self._opto_mode ) #
+        obs = jp.concatenate([reference_obs, proprioceptive_obs, opto_obs])
+        #obs = jp.concatenate([reference_obs, proprioceptive_obs])
         reward = (
             joint_reward
             + pos_reward
@@ -510,6 +554,9 @@ class FlyMultiClipTracking(FlyTracking):
         ls_iterations: int = 6,
         inference_mode: bool = False,
         free_jnt: bool = False,
+        opto_mode: bool = False,
+        sensory_neurons: int = 1440,
+        opto_fn = functools.partial( _optogenetic_reset, neu_id=[0], zvalue=1.0 ),
         **kwargs,
     ):
         super().__init__(
@@ -549,6 +596,9 @@ class FlyMultiClipTracking(FlyTracking):
             ls_iterations,
             inference_mode,
             free_jnt,
+            opto_mode=opto_mode,
+            sensory_neurons=sensory_neurons,
+            opto_fn=opto_fn,
             **kwargs,
         )
 

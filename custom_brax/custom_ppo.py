@@ -20,6 +20,7 @@ See: https://arxiv.org/pdf/1707.06347.pdf
 import functools
 import time
 from typing import Callable, Optional, Tuple, Union
+from dataclasses import replace
 
 from absl import logging
 from brax import base
@@ -321,13 +322,12 @@ def train(
         env_steps=0,
     )
 
-    
     # Load from checkpoint, and set params for decoder if freeze, or all if continuing
     if checkpoint_path is not None and epath.Path(checkpoint_path).exists():
         logging.info("restoring from checkpoint %s", checkpoint_path)
         #env_steps = int(epath.Path(checkpoint_path).stem)
         eval_it = int(epath.Path(checkpoint_path).stem)
-        print('reset env_steps to:', env_steps)
+        #print('reset env_steps to:', env_steps)
         ckptr = ocp.CompositeCheckpointHandler()
         tracking_task_obs_size = 935
         tracking_obs_size = (
@@ -380,6 +380,7 @@ def train(
             summed_variance = training_state.normalizer_params.summed_variance.at[
                 task_obs_size:
             ].set(loaded_normalizer_params.summed_variance[tracking_task_obs_size:])
+            std = jnp.where(std == 0, 1, std)
             normalizer_params = RunningStatisticsState(
                 count=jnp.zeros(()), mean=mean, summed_variance=summed_variance, std=std
             )
@@ -419,6 +420,9 @@ def train(
             env_steps = 0
             eval_it = 0
 
+        # replace all std:
+        new_std = jnp.where(normalizer_params.std == 0, 1, normalizer_params.std)
+        normalizer_params = replace(normalizer_params, std=new_std)
         training_state = (
             TrainingState(  # pytype: disable=wrong-arg-types  # jax-ndarray
                 optimizer_state=optimizer.init(

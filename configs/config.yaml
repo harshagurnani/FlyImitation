@@ -3,7 +3,7 @@ dataset_name: ${dataset.name}
 
 ##### Easy Access Variables #####
 # if set to positive integer, overrides the default
-version: 'sensory_v4'
+version: 'sensory_debug'
 seed: 22
 num_gpus: 1
 run_id: 44
@@ -39,6 +39,7 @@ hydra:
             - num_gpus
             - train.num_envs
             - load_jobid
+            - train.kl_weight
 
   run:
     dir: ${paths.base_dir}/${hydra:job.override_dirname}

@@ -173,7 +173,7 @@ class IntentionNetwork(nn.Module):
             jnp.concatenate([z, obs[..., self.task_obs_size :]], axis=-1)
         )
 
-        return action, {"latent_mean": latent_mean, "latent_logvar": latent_logvar}
+        return action, {"latent_mean": latent_mean, "latent_logvar": latent_logvar, "z": z}
     
 
 class SensoryIntentionNetwork(nn.Module):
@@ -205,7 +205,7 @@ class SensoryIntentionNetwork(nn.Module):
             jnp.concatenate([z, sensez], axis=-1)
         )
 
-        return action, {"latent_mean": latent_mean, "latent_logvar": latent_logvar, "sense_z": sensez }
+        return action, {"latent_mean": latent_mean, "latent_logvar": latent_logvar, "sense_z": sensez, "z":z }
 
 
 class SensoryFecoIntentionNetwork(nn.Module):
@@ -258,7 +258,7 @@ class SensoryFecoIntentionNetwork(nn.Module):
             jnp.concatenate([z, sensez], axis=-1)
         )
 
-        return action, {"latent_mean": latent_mean, "latent_logvar": latent_logvar, "sense_z": sensez }
+        return action, {"latent_mean": latent_mean, "latent_logvar": latent_logvar, "sense_z": sensez, "z":z }
 
 
 
@@ -296,7 +296,7 @@ class NoisySensoryIntentionNetwork(nn.Module):
             jnp.concatenate([z, sensez], axis=-1)
         )
 
-        return action, {"latent_mean": latent_mean, "latent_logvar": latent_logvar, "slatent_mean": slatent_mean, "slatent_logvar": slatent_logvar, "sense_z": sensez }
+        return action, {"latent_mean": latent_mean, "latent_logvar": latent_logvar, "slatent_mean": slatent_mean, "slatent_logvar": slatent_logvar, "sense_z": sensez, "z":z }
 
 
 class EncoderDecoderNetwork(nn.Module):
@@ -319,7 +319,7 @@ class EncoderDecoderNetwork(nn.Module):
             jnp.concatenate([z, obs[..., self.task_obs_size :]], axis=-1)
         )
 
-        return action, {}
+        return action, {"z":z}
     
 
 class SensoryEncoderDecoderNetwork(nn.Module):
@@ -347,7 +347,7 @@ class SensoryEncoderDecoderNetwork(nn.Module):
             jnp.concatenate([z, sensez], axis=-1)
         )
 
-        return action, {"sense_z": sensez }
+        return action, {"sense_z": sensez, "z":z }
 
 
 class RandomIntentionNetwork(nn.Module):
@@ -371,7 +371,7 @@ class RandomIntentionNetwork(nn.Module):
             )
         )
 
-        return action, z
+        return action, {"z":z}
     
 
 def make_intention_policy(
@@ -783,19 +783,23 @@ class SensoryEncodingNetwork_v3(nn.Module):
         self.npos = self.joints + self.body_pos
         #if self.nvel < 0:
         self.nvel = self.joints + self.body_vel
+        self.n_sensory_latents = self.joints * 2 * self.nneurons
 
     def __call__(self, obs, key):
         #_, encoder_rng = jax.random.split(key)
         # encode sensory state
         qpos = jax.lax.dynamic_slice_in_dim( obs, self.task_obs_size, self.npos, axis=-1 ) # should at least be 7 + njoints
         qvel = jax.lax.dynamic_slice_in_dim( obs, self.task_obs_size + self.npos, self.nvel, axis=-1 ) # should at least be 6 + njoints
+        opto_inp = jax.lax.dynamic_slice_in_dim( obs, -self.n_sensory_latents, self.n_sensory_latents, axis=-1 ) # 1440!!!! -- too long
         z1_1 = self.sensory_claw_1(jax.lax.dynamic_slice_in_dim(qpos, -self.joints, self.joints, axis=-1))
         z1_2 = self.sensory_claw_2(jax.lax.dynamic_slice_in_dim(qpos, -self.joints, self.joints, axis=-1))
         z2 = self.sensory_hook(jax.lax.dynamic_slice_in_dim(qvel, -self.joints, self.joints, axis=-1))
+        #opto_inp = jnp.nan_to_num(opto_inp, nan=0.0)
+        encoded_neu = jnp.concatenate([z1_1, z1_2, z2], axis=-1) + opto_inp
         sensez = jnp.concatenate([
             jax.lax.dynamic_slice_in_dim(qpos, 0, self.body_pos, axis=-1),
             jax.lax.dynamic_slice_in_dim(qvel, 0,  self.body_vel, axis=-1),
-            z1_1, z1_2, z2], axis=-1)
+            encoded_neu], axis=-1)
 
         return sensez
     
@@ -924,7 +928,6 @@ def make_sensory_encoding_network(
             std_scale=std_scale,
             **kwargs
         )
-    #print('sensory_module', sensory_module)
 
     def encode_senses(processor_params, sensory_params, obs, key):
         obs = preprocess_observations_fn(obs, processor_params)

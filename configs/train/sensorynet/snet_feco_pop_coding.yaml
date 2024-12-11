@@ -1,0 +1,12 @@
+name: snet_feco_pop_coding
+sensory_neurons: 20
+random_feco_bias: False
+std_scale: .75
+activation: "relu"
+activation_hook: "tanh"
+activation_claw: "gaussian"
+invert_claw: True
+hook_bias_scale: .8
+claw_bias_scale: 1.0
+hook_bias_range: [-1.0, 3.0]
+claw_bias_range: [-1.0, 3.0]

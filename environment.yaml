@@ -360,4 +360,3 @@ dependencies:
 variables:
   MUJOCO_GL: osmesa
   PYOPENGL_PLATFORM: osmesa
-prefix: /home/hg84/miniconda3/envs/stac-mjx-env
